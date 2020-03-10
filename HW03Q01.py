@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import argparse
+import random
 
 import os
 import sys
@@ -9,15 +10,14 @@ from time import time
 from datetime import datetime
 
 # constants
-ARMS = 10
-RUNS = 10
+#ARMS = 10
+RUNS = 100
 STEPS_PER_RUN = 1000
-TRAINING_STEPS = 10
-TESTING_STEPS = 5
+#TRAINING_STEPS = 10
+#TESTING_STEPS = 5
+seed_count = 1
 
 NOW = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
-SEED = None
-# SEED = 197710
 
 # #############################################################################
 #
@@ -34,12 +34,7 @@ def get_arguments():
                              'boolean, got {}'.format(s))
         return {'true': True, 'false': False}[s.lower()]
 
-    parser = argparse.ArgumentParser(description='Creating a k-armed bandit.')
-    parser.add_argument('--seed', type=int, default=SEED,
-                        help='Seed for the random number generator.')
-    parser.add_argument('-k', '--arms', type=int, default=ARMS,
-                        help='Number of arms on the bandit. Default: '
-                        + str(ARMS))
+    parser = argparse.ArgumentParser(description='Implementing Baird Counterexample.')
     parser.add_argument('-n', '--runs', type=int, default=RUNS,
                         help='Number of runs to be executed. Default: '
                         + str(RUNS))
@@ -47,15 +42,8 @@ def get_arguments():
                         help='Number of steps in each run. One run step is '
                         'the ensemble of training steps and testing steps. '
                         'Default: ' + str(STEPS_PER_RUN))
-    parser.add_argument('--training_steps', type=int, default=TRAINING_STEPS,
-                        help='Number of training steps to be executed. '
-                        'Default: ' + str(TRAINING_STEPS))
-    parser.add_argument('--testing_steps', type=int, default=TESTING_STEPS,
-                        help='Number of testing steps to be executed. '
-                        'Default: ' + str(TESTING_STEPS))
 
     return parser.parse_args()
-
 
 # #############################################################################
 #
@@ -108,13 +96,11 @@ def plot4(title, training_return, training_regret, testing_reward, testing_regre
     plot_line_variance(axs[1, 1], testing_regret)
     axs[1, 1].set_title('Total testing regret')
 
-
 # #############################################################################
 #
 # Helper functions
 #
 # #############################################################################
-
 
 def softmax(x):
     '''Softmax implementation for a vector x.'''
@@ -135,16 +121,72 @@ def random_argmax(vector):
 
 # #############################################################################
 #
-# Main
+# Agent performing semi-gradient TD(0) for the Baird's counterexample
 #
 # #############################################################################
 
+class TD_Zero_Agent_Baird_Counterexample():
+    def __init__(self,alpha,args, gamma = 0.99):
+        self.alpha = alpha
+        self.args = args
+        self.gamma = gamma
+        self.ws = np.zeros((self.args.runs, self.args.steps+1, 8))
+        for run in range(self.ws.shape[0]):
+            self.ws[run] = np.array([1,1,1,1,1,1,10,1])
+        self.features = np.zeros((7,8))
+        self.features[0,0]=2
+        self.features[0,7] = 1
+        self.features[1, 1] = 2
+        self.features[1, 7] = 1
+        self.features[2, 2] = 2
+        self.features[2, 7] = 1
+        self.features[3, 3] = 2
+        self.features[3, 7] = 1
+        self.features[4, 4] = 2
+        self.features[4, 7] = 1
+        self.features[5, 5] = 2
+        self.features[5, 7] = 1
+        self.features[6, 6] = 1
+        self.features[6, 7] = 2
+        self.current_state = None
+
+    def train_all_runs(self):
+        for run_id in range(0, self.args.runs):
+            global seed_count
+            np.random.seed(seed_count)
+            seed_count += 1
+            self.current_state = random.randint(0, 6)
+            self.semi_gradient_one_run(run_id)
+
+    def semi_gradient_one_run(self, run_id):
+        for step in range(1,self.args.steps+1):
+            self.semi_gradient_one_step(run_id, step)
+
+    def semi_gradient_one_step(self, run_id, step):
+        old_state = self.current_state
+        new_state = random.randint(0,6)
+        w = self.ws[run_id, step-1]
+        delta = self.gamma * np.sum(self.features[new_state] * w) - \
+                np.sum(self.features[old_state] * w)
+        ratio = (7*(new_state==6))
+        self.ws[run_id, step] = self.ws[run_id, step-1] + self.alpha * ratio * delta * self.features[old_state]
+        self.current_state = new_state
+
+# #############################################################################
+#
+# Main
+#
+# #############################################################################
 
 def main():
 
     # parses command line arguments
     args = get_arguments()
-
+    alpha = 0.01
+    agent = TD_Zero_Agent_Baird_Counterexample(alpha, args)
+    agent.train_all_runs()
+    print(np.mean(agent.ws[0:,-1], axis = 0))
+    #print(agent.ws[0:, -1])
 
 if __name__ == '__main__':
     main()
