@@ -65,7 +65,7 @@ def plot_all_variances(data):
 
     fig, axs = plt.subplots(nrows=3, ncols=3,
                             sharey=True,
-                            figsize=(12,14))
+                            figsize=(12,15))
 
     for id_ax in range(8):
         label = "$w_{}$".format(str(id_ax+1))
