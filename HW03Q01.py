@@ -56,28 +56,6 @@ def get_arguments():
 # Plotting
 #
 # #############################################################################
-"""
-def plot_line_variance(ax, data, gamma=1):
-    '''Plots the average data for each time step and draws a cloud
-    of the standard deviation around the average.
-
-    ax:     axis object where the plot will be drawn
-    data:   data of shape (nb_runs, steps, 8)
-    gamma:  (optional) scaling of the standard deviation around the average
-            if ommitted, gamma = 1.'''
-
-    avg = np.average(data, axis=0)
-    std = np.std(data, axis=0)
-
-    # ax.plot(avg + gamma * std, 'r--', linewidth=0.5)
-    # ax.plot(avg - gamma * std, 'r--', linewidth=0.5)
-    ax.fill_between(range(len(avg)),
-                    avg + gamma * std,
-                    avg - gamma * std,
-                    facecolor='red',
-                    alpha=0.2)
-    ax.plot(avg)
-"""
 
 def plot_all_variances(data):
     '''Creates the two required plots: cumulative_reward and number of timesteps
@@ -85,9 +63,9 @@ def plot_all_variances(data):
 
     data: data of shape(nb_runs, steps, 8)'''
 
-    fig, axs = plt.subplots(nrows=4, ncols=2,
+    fig, axs = plt.subplots(nrows=3, ncols=3,
                             sharey=True,
-                            figsize=(10,15))
+                            figsize=(12,14))
 
     for id_ax in range(8):
         label = "$w_{}$".format(str(id_ax+1))
@@ -147,29 +125,6 @@ def plot_coefficients_w(ws):
     # Display a figure.
     plt.show()
 
-
-def plot4(title, training_return, training_regret, testing_reward, testing_regret):
-    '''Creates the four required plots: average training return, training regret,
-    testing policy reward and testing regret.'''
-
-    fig, axs = plt.subplots(nrows=2, ncols=2,
-                            constrained_layout=True,
-                            figsize=(10, 6))
-
-    fig.suptitle(title, fontsize=12)
-
-    plot_line_variance(axs[0, 0], training_return)
-    axs[0, 0].set_title('Training return')
-
-    plot_line_variance(axs[0, 1], training_regret)
-    axs[0, 1].set_title('Total training regret')
-
-    plot_line_variance(axs[1, 0], testing_reward)
-    axs[1, 0].set_title('Policy reward')
-    axs[1, 0].set_ylim(bottom=0)
-
-    plot_line_variance(axs[1, 1], testing_regret)
-    axs[1, 1].set_title('Total testing regret')
 
 # #############################################################################
 #
@@ -263,22 +218,25 @@ def train_one_agent(args):
     #print(np.mean(agent.ws[0:,-1], axis = 0))
     #print(agent.ws[0:, -1])
     plot_coefficients_w(agent.ws)
-    print("In the previous plot, you can observe the curves for all the parameters $w_1$, $w_2$, $w_3$, $w_4$, $w_5$, \\n \
-    $w_6$, \$w_7$, $w_8$. The parameters grow very similarly to Figure 11.2 of the RL book of Sutton and Barto. \\n \
-    The parameter $w_7$ barely decreases. The remaining parameters are indistiguishable in the algorithm, and they grow \\n \
-    very similarly between the curves of $w_7$ and $w_8$. It is clear from this plot that 7 of the parameters diverge. \\n \
-    As in the book, this shows that the combination of function approximation, bootstrapping and off-policy training \\n \
-    (i.e. the deadly trial) can diverge, even in the linear case and when $\\alpha=0.01$ is very small.")
-    #print(rep1)
+    """
+    In the previous plot, you can observe the curves for all the parameters $w_1$, $w_2$, $w_3$, $w_4$, $w_5$,
+    $w_6$, \$w_7$, $w_8$. The parameters grow very similarly to Figure 11.2 of the RL book of Sutton and Barto. 
+    The parameter $w_7$ barely decreases. The remaining parameters are indistiguishable in the algorithm, and they grow 
+    very similarly between the curves of $w_7$ and $w_8$. It is clear from this plot that 7 of the parameters diverge. 
+    As in the book, this shows that the combination of function approximation, bootstrapping and off-policy training 
+    (i.e. the deadly trial) can diverge, even in the linear case and when $\\alpha=0.01$ is very small.
+    """
 
 def train_agents_50(args):
     agents_50 = TD_Zero_Agent_Baird_Counterexample(args, nb_runs=50)
     agents_50.train_all_runs()
     plot_coefficients_w(agents_50.ws)
 
-    print("In the previous plot, we did the same experiment as in the first plot but we averaged 50 runs instead of a single run. \
-    We thought we didn't need to do that, but we decided to include it anyway. The curves of the parameters\
-    $w_1$, $w_2$, $w_3$, $w_4$, $w_5$ and $w_6$ are almost indistinguishable, as expected.")
+    """
+    In the previous plot, we did the same experiment as in the first plot but we averaged 50 runs instead of a single run. 
+    We thought we didn't need to do that, but we decided to include it anyway. The curves of the parameters
+    $w_1$, $w_2$, $w_3$, $w_4$, $w_5$ and $w_6$ are almost indistinguishable, as expected.
+    """
 
 
 def agents_50_variance(args):
@@ -286,10 +244,12 @@ def agents_50_variance(args):
     agents_50.train_all_runs()
     plot_all_variances(agents_50.ws)
 
-    print("Just as the previous comments, we were not sure if we had to run the algorithm for multiple runs. We did it \
-        anyway and the variance seems proportional to the value on the y-axis. More specifically, the variance is the \
-        highest for the parameter $w_8$ which is also the parameter that grows the fastest. The variance is close to \
-        0 for $w_7$ and the variance is intermediate for all the other parameters.")
+    """
+    Just as the previous comments, we were not sure if we had to run the algorithm for multiple runs. We did it 
+    anyway and the variance seems proportional to the value on the y-axis. More specifically, the variance is the 
+    highest for the parameter $w_8$ which is also the parameter that grows the fastest. The variance is close to 
+    0 for $w_7$ and the variance is intermediate for all the other parameters.
+    """
 
 def main():
     args = get_arguments()
@@ -304,5 +264,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
