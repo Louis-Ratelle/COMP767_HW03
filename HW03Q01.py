@@ -11,11 +11,11 @@ from datetime import datetime
 
 # constants
 #ARMS = 10
-RUNS = 100
+RUNS = 1
 STEPS_PER_RUN = 1000
 #TRAINING_STEPS = 10
 #TESTING_STEPS = 5
-seed_count = 1
+seed_count = 16
 
 NOW = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
 
@@ -50,13 +50,13 @@ def get_arguments():
 # Plotting
 #
 # #############################################################################
-
+"""
 def plot_line_variance(ax, data, gamma=1):
     '''Plots the average data for each time step and draws a cloud
     of the standard deviation around the average.
 
     ax:     axis object where the plot will be drawn
-    data:   data of shape (num_trials, timesteps)
+    data:   data of shape (nb_runs, steps, 8)
     gamma:  (optional) scaling of the standard deviation around the average
             if ommitted, gamma = 1.'''
 
@@ -71,6 +71,75 @@ def plot_line_variance(ax, data, gamma=1):
                     facecolor='red',
                     alpha=0.2)
     ax.plot(avg)
+"""
+
+def plot_all_variances(data):
+    '''Creates the two required plots: cumulative_reward and number of timesteps
+        per episode.
+
+    data: data of shape(nb_runs, steps, 8)'''
+
+    fig, axs = plt.subplots(nrows=4, ncols=2,
+                            sharey=True,
+                            figsize=(10,15))
+
+    for id_ax in range(8):
+        label = "$w_{}$".format(str(id_ax+1))
+        color = "C" + str(id_ax+1)
+        data_one_var  = data[:,:,id_ax]
+        plot_line_variance(axs, id_ax, data_one_var, label, color, axis=0, delta=1)
+
+    plt.show()
+
+def plot_line_variance(axs, id_ax, data_one_var, label, color, axis=0, delta=1):
+    '''Plots the average data for each time step and draws a cloud
+    of the standard deviation around the average.
+    Input:
+    ax      : axis object where the plot will be drawn
+    data    : data of shape (nb_runs, steps)
+    color   : the color to be used
+    delta   : (optional) scaling of the standard deviation around the average
+              if ommitted, delta = 1.'''
+
+    avg = np.average(data_one_var, axis)
+    std = np.std(data_one_var, axis)
+    x_values = list(range(1,data_one_var.shape[1]+1))
+
+    # ax.plot(avg + delta * std, color + '--', linewidth=0.5)
+    # ax.plot(avg - delta * std, color + '--', linewidth=0.5)
+    #fig, ax = plt.subplots(nrows=1, ncols=1,
+                            #constrained_layout=True,
+                            #sharey=True,
+                            #figsize=(5,5))
+    ax = axs[id_ax//len(axs[0]), id_ax % len(axs[0])]
+    ax.fill_between(x_values,
+                    avg + delta * std,
+                    avg - delta * std,
+                    facecolor=color,
+                    alpha=0.2)
+    ax.set_xlabel('Steps')
+    #ax.set_ylabel('mean and variance of w' + str(id_ax + 1))
+    ax.set_title('mean and variance of $w_{}$'.format(str(id_ax + 1)))
+    #ax.set_xlim([0, 1.0])
+    #ax.set_ylim([-0.2, 1.0])
+    ax.plot(x_values, avg, label=label, color=color, marker='.')
+    #plt.show()
+
+
+def plot_coefficients_w(ws):
+    aver_ws = np.mean(ws, axis = 0)
+    x_range = list(range(aver_ws.shape[0]))
+    for pos_w in range(aver_ws.shape[1]):
+        plt.plot(x_range, aver_ws[:,pos_w], label="$w_{}$".format(pos_w+1))
+    plt.xlabel('Steps')
+    # Set the y axis label of the current axis.
+    #plt.ylabel('y - axis')
+    # Set a title of the current axes.
+    plt.title('Semi-gradient Off-policy TD')
+    # show a legend on the plot
+    plt.legend()
+    # Display a figure.
+    plt.show()
 
 
 def plot4(title, training_return, training_regret, testing_reward, testing_regret):
@@ -126,11 +195,12 @@ def random_argmax(vector):
 # #############################################################################
 
 class TD_Zero_Agent_Baird_Counterexample():
-    def __init__(self,alpha,args, gamma = 0.99):
+    def __init__(self,alpha,args, nb_runs, gamma = 0.99):
         self.alpha = alpha
         self.args = args
         self.gamma = gamma
-        self.ws = np.zeros((self.args.runs, self.args.steps+1, 8))
+        self.nb_runs = nb_runs
+        self.ws = np.zeros((self.nb_runs, self.args.steps+1, 8))
         for run in range(self.ws.shape[0]):
             self.ws[run] = np.array([1,1,1,1,1,1,10,1])
         self.features = np.zeros((7,8))
@@ -151,11 +221,11 @@ class TD_Zero_Agent_Baird_Counterexample():
         self.current_state = None
 
     def train_all_runs(self):
-        for run_id in range(0, self.args.runs):
+        for run_id in range(0, self.nb_runs):
             global seed_count
             np.random.seed(seed_count)
             seed_count += 1
-            self.current_state = random.randint(0, 6)
+            self.current_state = np.random.choice(7)
             self.semi_gradient_one_run(run_id)
 
     def semi_gradient_one_run(self, run_id):
@@ -164,7 +234,7 @@ class TD_Zero_Agent_Baird_Counterexample():
 
     def semi_gradient_one_step(self, run_id, step):
         old_state = self.current_state
-        new_state = random.randint(0,6)
+        new_state = np.random.choice(7)
         w = self.ws[run_id, step-1]
         delta = self.gamma * np.sum(self.features[new_state] * w) - \
                 np.sum(self.features[old_state] * w)
@@ -181,12 +251,40 @@ class TD_Zero_Agent_Baird_Counterexample():
 def main():
 
     # parses command line arguments
+    #global seed_count
+    #print(seed_count)
     args = get_arguments()
     alpha = 0.01
-    agent = TD_Zero_Agent_Baird_Counterexample(alpha, args)
+    agent = TD_Zero_Agent_Baird_Counterexample(alpha, args, nb_runs=1)
     agent.train_all_runs()
-    print(np.mean(agent.ws[0:,-1], axis = 0))
+    #print(np.mean(agent.ws[0:,-1], axis = 0))
     #print(agent.ws[0:, -1])
+    plot_coefficients_w(agent.ws)
+    """
+    In the previous plot, you can observe the curves for all the parameters $w_1$, $w_2$, $w_3$, $w_4$, $w_5$, $w_6$, $w_7$, and $w_8$.
+    The parameters grow very similarly to Figure 11.2 of the RL book of Sutton and Barto. The parameter $w_7$ barely decreases. 
+    The remaining parameters are indistiguishable in the algorithm, and they grow very similarly between the curves of $w_7$ and $w_8$. 
+    It is clear from this plot that 7 of the parameters diverge. As in the book, this shows that the combination of 
+    function approximation, bootstrapping and off-policy training (i.e. the deadly trial) can diverge, even in the linear
+    case and when $\\alpha=0.01$ is very small.
+    """
+    agents_50 = TD_Zero_Agent_Baird_Counterexample(alpha, args, nb_runs=50)
+    agents_50.train_all_runs()
+    plot_coefficients_w(agents_50.ws)
+    """
+    In the previous plot, we did the same experiment as in the first plot but we averaged 50 runs instead of a single run. 
+    We thought we didn't need to do that, but we decided to include it anyway. The curves of the parameters
+    $w_1$, $w_2$, $w_3$, $w_4$, $w_5$ and $w_6$ are almost indistinguishable, as expected. 
+    """
+    plot_all_variances(agents_50.ws)
+    """
+    Just as the previous comments, we were not sure if we had to run the algorithm for multiple runs. We did it 
+    anyway and the variance seems proportional to the value on the y-axis. More specifically, the variance is the 
+    highest for the parameter $w_8$ which is also the parameter that grows the fastest. The variance is close to 
+    0 for $w_7$ and the variance is intermediate for all the other parameters.
+    """
+
+
 
 if __name__ == '__main__':
     main()
