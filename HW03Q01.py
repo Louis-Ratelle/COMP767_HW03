@@ -35,9 +35,6 @@ def get_arguments():
         return {'true': True, 'false': False}[s.lower()]
 
     parser = argparse.ArgumentParser(description='Implementing Baird Counterexample.')
-    parser.add_argument('-n', '--runs', type=int, default=RUNS,
-                        help='Number of runs to be executed. Default: '
-                        + str(RUNS))
     parser.add_argument('-s', '--steps', type=int, default=STEPS_PER_RUN,
                         help='Number of steps in each run. One run step is '
                         'the ensemble of training steps and testing steps. '
@@ -284,6 +281,7 @@ def main():
     0 for $w_7$ and the variance is intermediate for all the other parameters.
     """
 
+    return agent, agents_50
 
 
 if __name__ == '__main__':
