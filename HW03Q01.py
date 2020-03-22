@@ -13,9 +13,12 @@ from datetime import datetime
 #ARMS = 10
 RUNS = 1
 STEPS_PER_RUN = 1000
+ALPHA = 0.01
+CHOOSE_IMPLEMENTATION = "one_agent"
 #TRAINING_STEPS = 10
 #TESTING_STEPS = 5
 seed_count = 16
+
 
 NOW = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
 
@@ -39,6 +42,12 @@ def get_arguments():
                         help='Number of steps in each run. One run step is '
                         'the ensemble of training steps and testing steps. '
                         'Default: ' + str(STEPS_PER_RUN))
+    parser.add_argument('-alpha', '--alpha', type=int, default=ALPHA,
+                        help='learning rate'
+                        'Default: ' + str(ALPHA))
+    parser.add_argument('-choose_implementation', '--choose_implementation', type=str, default=CHOOSE_IMPLEMENTATION,
+                        help='choose if you do 1 run, 50 runs, or variance for 50 runs'
+                        'Default: ' + CHOOSE_IMPLEMENTATION)
 
     return parser.parse_args()
 
@@ -192,9 +201,9 @@ def random_argmax(vector):
 # #############################################################################
 
 class TD_Zero_Agent_Baird_Counterexample():
-    def __init__(self,alpha,args, nb_runs, gamma = 0.99):
-        self.alpha = alpha
+    def __init__(self,args, nb_runs, gamma = 0.99):
         self.args = args
+        self.alpha = self.args.alpha
         self.gamma = gamma
         self.nb_runs = nb_runs
         self.ws = np.zeros((self.nb_runs, self.args.steps+1, 8))
@@ -245,39 +254,53 @@ class TD_Zero_Agent_Baird_Counterexample():
 #
 # #############################################################################
 
-def main():
-
+def train_one_agent(args):
     # parses command line arguments
     #global seed_count
     #print(seed_count)
-    args = get_arguments()
-    alpha = 0.01
-    agent = TD_Zero_Agent_Baird_Counterexample(alpha, args, nb_runs=1)
+    agent = TD_Zero_Agent_Baird_Counterexample(args, nb_runs=1)
     agent.train_all_runs()
     #print(np.mean(agent.ws[0:,-1], axis = 0))
     #print(agent.ws[0:, -1])
     plot_coefficients_w(agent.ws)
-    print("In the previous plot, you can observe the curves for all the parameters $w_1$, $w_2$, $w_3$, $w_4$, $w_5$, $w_6$, $w_7$, and $w_8$.\
-    The parameters grow very similarly to Figure 11.2 of the RL book of Sutton and Barto. The parameter $w_7$ barely decreases. \
-    The remaining parameters are indistiguishable in the algorithm, and they grow very similarly between the curves of $w_7$ and $w_8$. \
-    It is clear from this plot that 7 of the parameters diverge. As in the book, this shows that the combination of \
-    function approximation, bootstrapping and off-policy training (i.e. the deadly trial) can diverge, even in the linear \
-    case and when $\\alpha=0.01$ is very small.")
-    agents_50 = TD_Zero_Agent_Baird_Counterexample(alpha, args, nb_runs=50)
+    print("In the previous plot, you can observe the curves for all the parameters $w_1$, $w_2$, $w_3$, $w_4$, $w_5$, \\n \
+    $w_6$, \$w_7$, $w_8$. The parameters grow very similarly to Figure 11.2 of the RL book of Sutton and Barto. \\n \
+    The parameter $w_7$ barely decreases. The remaining parameters are indistiguishable in the algorithm, and they grow \\n \
+    very similarly between the curves of $w_7$ and $w_8$. It is clear from this plot that 7 of the parameters diverge. \\n \
+    As in the book, this shows that the combination of function approximation, bootstrapping and off-policy training \\n \
+    (i.e. the deadly trial) can diverge, even in the linear case and when $\\alpha=0.01$ is very small.")
+    #print(rep1)
+
+def train_agents_50(args):
+    agents_50 = TD_Zero_Agent_Baird_Counterexample(args, nb_runs=50)
     agents_50.train_all_runs()
     plot_coefficients_w(agents_50.ws)
+
     print("In the previous plot, we did the same experiment as in the first plot but we averaged 50 runs instead of a single run. \
     We thought we didn't need to do that, but we decided to include it anyway. The curves of the parameters\
     $w_1$, $w_2$, $w_3$, $w_4$, $w_5$ and $w_6$ are almost indistinguishable, as expected.")
+
+
+def agents_50_variance(args):
+    agents_50 = TD_Zero_Agent_Baird_Counterexample(args, nb_runs=50)
+    agents_50.train_all_runs()
     plot_all_variances(agents_50.ws)
 
     print("Just as the previous comments, we were not sure if we had to run the algorithm for multiple runs. We did it \
-    anyway and the variance seems proportional to the value on the y-axis. More specifically, the variance is the \
-    highest for the parameter $w_8$ which is also the parameter that grows the fastest. The variance is close to \
-    0 for $w_7$ and the variance is intermediate for all the other parameters.")
+        anyway and the variance seems proportional to the value on the y-axis. More specifically, the variance is the \
+        highest for the parameter $w_8$ which is also the parameter that grows the fastest. The variance is close to \
+        0 for $w_7$ and the variance is intermediate for all the other parameters.")
 
-
-
+def main():
+    args = get_arguments()
+    #print(args.choose_implementation)
+    assert args.choose_implementation in ["one_agent", "agents_50", "agents_50_variance"]
+    if args.choose_implementation =="one_agent":
+        train_one_agent(args)
+    elif args.choose_implementation == "agents_50":
+        train_agents_50(args)
+    elif args.choose_implementation == "agents_50_variance":
+        agents_50_variance(args)
 
 if __name__ == '__main__':
     main()
