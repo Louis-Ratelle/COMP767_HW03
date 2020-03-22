@@ -256,7 +256,7 @@ def main():
     agent.train_all_runs()
     #print(np.mean(agent.ws[0:,-1], axis = 0))
     #print(agent.ws[0:, -1])
-    plot_coefficients_w(agent.ws)
+    ##plot_coefficients_w(agent.ws)
     """
     In the previous plot, you can observe the curves for all the parameters $w_1$, $w_2$, $w_3$, $w_4$, $w_5$, $w_6$, $w_7$, and $w_8$.
     The parameters grow very similarly to Figure 11.2 of the RL book of Sutton and Barto. The parameter $w_7$ barely decreases. 
@@ -267,13 +267,13 @@ def main():
     """
     agents_50 = TD_Zero_Agent_Baird_Counterexample(alpha, args, nb_runs=50)
     agents_50.train_all_runs()
-    plot_coefficients_w(agents_50.ws)
+    ##plot_coefficients_w(agents_50.ws)
     """
     In the previous plot, we did the same experiment as in the first plot but we averaged 50 runs instead of a single run. 
     We thought we didn't need to do that, but we decided to include it anyway. The curves of the parameters
     $w_1$, $w_2$, $w_3$, $w_4$, $w_5$ and $w_6$ are almost indistinguishable, as expected. 
     """
-    plot_all_variances(agents_50.ws)
+    ##plot_all_variances(agents_50.ws)
     """
     Just as the previous comments, we were not sure if we had to run the algorithm for multiple runs. We did it 
     anyway and the variance seems proportional to the value on the y-axis. More specifically, the variance is the 
