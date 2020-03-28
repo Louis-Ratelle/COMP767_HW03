@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 import gym
 import argparse
 import matplotlib.pyplot as plt
@@ -260,184 +261,123 @@ def plot_line_variance(ax, x_values, data, label, color, axis=0, delta=1):
                     alpha=0.2)
     ax.plot(x_values, avg, label=label, color=color, marker='.')
 
-
 # #############################################################################
 #
-# Helper functions
-#
-# #############################################################################
-
-def random_argmax(vector):
-    '''Select argmax at random in case of tie for the max.'''
-
-    index = np.random.choice(np.where(vector == vector.max())[0])
-
-    return index
-
-
-# #############################################################################
-#
-# Sarsa
+# Policy
 #
 # #############################################################################
 
-def greedy_action(env, state, weights):
-    '''Chooses a greedy action.
 
-    Input:
-    env     : the environment to be used
-    state   : the current state
-    weights : the current weights to evaluate the state-action
-              value function for the greedy action
+class policy():
+    def __init__(self, env, seed=None):
+        self.env = env
+        self.hidden_size = args.hidden_size
 
-    Output:
-    action index'''
+        # initialize environement and weights
+        self.env.seed(seed)
 
-    q = np.zeros(env.action_space.n)
+        # initialize network
+        self.n_inputs = self.env.observation_space.shape[0]
+        self.n_outputs = self.env.action_space.n
 
-    for action in range(env.action_space.n):
-        # features[f(state, action)] = 1
-        # q[action] = np.dot(weights, features)
-        q[action] = np.sum(weights[f(state, action)])
+        self.model = tf.keras.models.Sequential([
+            tf.keras.layers.Dense(self.hidden_size, activation='relu')
+            # tf.keras.layers.Dropout(0.2)
+            tf.keras.layers.Dense(self.hidden_size, activation='relu')
+            # tf.keras.layers.Dropout(0.2)
+            tf.keras.layers.Dense(self.n_outputs)
+        ])
 
-    try:
-        action = random_argmax(q)
-    except (RuntimeError, ValueError):
-        action = env.action_space.sample()
-        'Warning: using random actions for greedy policy. Try modifying alpha.'
+    def choose_action(self, state):
+        predictions = self.model(state).numpy()
+        action_probs = tf.nn.softmax(predictions).numpy()
+        action = np.random.choice(self.env.action_space, p=action_probs)
+        return action
 
-    if args.verbose:
-        print('greedy action: {}'.format(action))
+    def get_episode(self):
+        states = []
+        actions = []
+        rewards = []
 
-    return action
+        state = self.env.reset()
 
+        done = False
+        while not done:
+            states.append(state)
+            action = self.choose_action(state)
+            actions.append(action)
 
-def random_action(env):
-    '''Chooses a random action from the
-    action space in the environment env.
+            state, reward, done, _ = self.env.step(action)
+            rewards.append(reward)
 
-    Input:
-    env     : the environment to be used
+        episode = {
+            'states': states,
+            'actions': actions,
+            'rewards': rewards
+        }
 
-    Output:
-    action index'''
+        return episode
 
-    action = env.action_space.sample()
-    if args.verbose:
-        print('Random action: {}'.format(action))
-    return action
-
-
-def choose_action(env, state, weights):
-    '''Chooses a random action with probability args.epsilon
-    and a greedy action with probability 1 - args.epsilon
-
-    Input:
-    env     : the environment to be used
-    state   : the current state
-    weights : the current weights to evaluate the state-action
-              value function for the greedy action'''
-
-    choices = ['random', 'greedy']
-    c = np.random.choice(choices, p=[args.epsilon, 1 - args.epsilon])
-    if c == 'random':
-        return random_action(env)
-    else:
-        return greedy_action(env, state, weights)
+# #############################################################################
+#
+# Algorithms
+#
+# #############################################################################
 
 
-def f(s, a):
-    '''Returns list of indices where the features are active.
+def reinforce(env, alpha, seed=None):
+    gamma = args.gamma
 
-    Input:
-    s   : state
-    a   : action
-
-    Output:
-    list of indices where features are active. The list has
-    length args.tilings (the number of active features) and
-    each element on the list can go from
-    0 to args.size - 1'''
-
-    # get position and velocity from state s
-    x, xdot = s
-
-    # For a state s = [x, xdot] and action a
-    # obtain indices for each tiling as defined in Sutton, R. Reinforcement
-    # Learning, 2nd ed. (2018), Section 10.1, page 246'''
-    indices = tiles(
-        iht, 8, [8 * x / (0.5 + 1.2), 8 * xdot / (0.07 + 0.07)], [a]
-        )
-    active_idx = indices
-    if args.verbose:
-        print('State: {}, Action: {}'.format(s, a))
-        print(indices)
-        print(active_idx)
-    return active_idx
-
-
-def sarsa(env, lmbda, alpha, seed=None):
-    '''Performs the sarsa(lambda) algorithm as defined in
-    Sutton, Richard. Reinforcement Learning, 2nd. ed.
-    page 305
-
-    Input:
-    env     : the environment to be used
-    lmbda   : the parameter lambda of Sarsa(lambda) algorithm
-    alpha   : the learning rate
-    seed    : (optional) if present, the environment will be
-              initialised with this seed, otherwise the system
-              will generate its own seed.
-
-    Output:
-    array of shape (args.episodes) containing the number of
-    steps per episode.'''
-
+    assert 0 <= gamma <= 1
     assert alpha > 0
-    assert 0 <= lmbda <= 1
 
-    # initialize environement and weights
-    env.seed(seed)
-    w = np.zeros(args.size)
-    steps_per_episode = np.zeros(args.episodes)
+    delta = np.Infinity
+    pi = policy(env, seed)
 
-    # create index hash table
-    iht = IHT(args.size)
+    while delta > tol:
+        episode = pi.get_episode()
+        T = len(episode['states'])
+        for t in range(T):
+            G = sum
+            delta = G - v_hat(state, w)
+            w += alpha_w * delta * grad_v(state, w)
+            theta += alpha_t * gamma ** t * delta * grad_pol(state, action, theta)
 
-    for episode in tqdm(range(args.episodes)):
 
-        steps = 0
-        env.reset()
-        state0 = env.state
-        action0 = choose_action(env, state0, w)
-        z = np.zeros(w.shape)
+def actor_critic(env, alpha_t, alpha_w, lambda_t, lambda_w, seed=None):
+    gamma = args.gamma
 
-        while steps < args.max_steps:
-            steps += 1
-            state1, reward, done, info = env.step(action0)
-            if args.render: env.render()
-            delta = reward
-            for i in f(state0, action0):
-                delta = delta - w[i]
-                z[i] = 1
-            if done:
-                w = w + alpha * delta * z
-                # go to next episode
-                break
-            action1 = choose_action(env, state1, w)
-            for i in f(state1, action1):
-                delta = delta + args.gamma * w[i]
-            w = w + alpha * delta * z
-            z = args.gamma * lmbda * z
+    assert 0 <= gamma <= 1    
+    assert alpha_t > 0
+    assert alpha_w > 0
+    assert 0 <= lambda_t <= 1
+    assert 0 <= lambda_w <= 1
+
+    theta_size = 10
+    w_size = 10
+
+    theta = np.zeros(theta_size)
+    w = np.zeros(w_size)
+
+    delta = np.Infinity
+
+    while delta > tol:
+        state0
+        z_t = np.zeros(theta_size)
+        z_w = np.zeros(w_size)
+        I = 1
+        done = False
+
+        while not done:
+            action0 = pol_state(state0, theta)
+            state1, R, done, info = env.step(action0)
+            delta = R + gamma * v_hat(state1, w) - v_hat(state0, w)
+            z_w = gamma * lambda_w * z_w + grad_v(state0, w)
+            z_t = gamma * lambda_t * z_t + I * grad_pol(state0, action0, theta)
+            w += alpha_w * delta * z_w
+            theta += alpha_t * delta * z_t
+            I *= gamma
             state0 = state1
-            action0 = action1
-
-        steps_per_episode[episode] = steps
-        if args.verbose:
-            print('Episode {} finished after {} steps.'.format(episode + 1, steps))
-    env.close()
-
-    return steps_per_episode
 
 # #############################################################################
 #
