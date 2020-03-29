@@ -30,13 +30,6 @@ NOW = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
 
 
 def get_arguments():
-    def _str_to_bool(s):
-        '''Convert string to boolean (in argparse context)'''
-        if s.lower() not in ['true', 'false']:
-            raise ValueError('Argument needs to be a '
-                             'boolean, got {}'.format(s))
-        return {'true': True, 'false': False}[s.lower()]
-
     parser = argparse.ArgumentParser(description='Implementing Baird Counterexample.')
     parser.add_argument('-s', '--steps', type=int, default=STEPS_PER_RUN,
                         help='Number of steps in each run. One run step is '
@@ -69,7 +62,7 @@ def plot_all_variances(data):
 
     for id_ax in range(8):
         label = "$w_{}$".format(str(id_ax+1))
-        color = "C" + str(id_ax+1)
+        color = "C" + str(id_ax)
         data_one_var  = data[:,:,id_ax]
         plot_line_variance(axs, id_ax, data_one_var, label, color, axis=0, delta=1)
 
@@ -106,7 +99,7 @@ def plot_line_variance(axs, id_ax, data_one_var, label, color, axis=0, delta=1):
     ax.set_title('mean and variance of $w_{}$'.format(str(id_ax + 1)))
     #ax.set_xlim([0, 1.0])
     #ax.set_ylim([-0.2, 1.0])
-    ax.plot(x_values, avg, label=label, color=color, marker='.')
+    ax.plot(x_values, avg, label=label, color=color)
     #plt.show()
 
 
@@ -163,7 +156,7 @@ class TD_Zero_Agent_Baird_Counterexample():
         self.nb_runs = nb_runs
         self.ws = np.zeros((self.nb_runs, self.args.steps+1, 8))
         for run in range(self.ws.shape[0]):
-            self.ws[run] = np.array([1,1,1,1,1,1,10,1])
+            self.ws[run,0] = np.array([1,1,1,1,1,1,10,1])
         self.features = np.zeros((7,8))
         self.features[0,0]=2
         self.features[0,7] = 1
