@@ -1,30 +1,28 @@
-import numpy as np
 import tensorflow as tf
+import numpy as np
 import gym
 import argparse
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pickle
-import os
-import sys
-import copy
-from tqdm import tqdm
-from tiling import tiles, IHT
 from datetime import datetime
 
 SEED = None
-GAMMA = 1
-EPSILON = 0.1
-TILINGS = 8
-SIZE = 4096
-ALPHAS = 2.0**np.array([-6, -4, -2, 0]) / TILINGS
-LAMBDAS = [1, 0.99, 0.95, 0.5, 0]
-RUNS = 20
-EPISODES = 1000
-MAX_STEPS = 2000
-ENV = 'MountainCar-v0'
+GAMMA = 0.9
+ALPHAS = 2.0**np.array([-6, -4, -2, 0])
+HIDDEN_SIZE = 32
+RUNS = 5
+EPISODES = 2000
+MAX_STEPS = 200
+UPDATE_EVERY = 10
+ENV = 'CartPole-v1'
 SAVED_MODELS_FOLDER = './data/'
 NOW = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
+
+n_episodes = 2000
+env = gym.make('CartPole-v1').unwrapped
+scores = []
+update_every = 10
 
 # #############################################################################
 #
@@ -46,28 +44,14 @@ def get_arguments():
     parser.add_argument('--gamma', type=float, default=GAMMA,
                         help='Defines the discount rate. Default: '
                         + str(GAMMA))
-    parser.add_argument('--epsilon', type=float, default=EPSILON,
-                        help='Defines the parameter epsilon for the '
-                        'epsilon-greedy policy. The algorithm will '
-                        'perform an exploratory action with probability '
-                        'epsilon. Default: ' + str(EPSILON))
     parser.add_argument('--alphas', type=float, default=ALPHAS,
                         nargs='*',
                         help='The learning rates to be '
                         'used. More than one value can be specified if '
                         'separated by spaces. Default: ' + str(ALPHAS))
-    parser.add_argument('--lambdas', type=float, default=LAMBDAS,
-                        nargs='*',
-                        help='The lambda parameters for '
-                        'Sarsa(lambda). More than one value can be specified '
-                        'if separated by spaces. Default: ' + str(LAMBDAS))
-    parser.add_argument('-t', '--tilings', type=int, default=TILINGS,
-                        help='Number of tiles to use. Default: '
-                        + str(TILINGS))
-    parser.add_argument('-s', '--size', type=int, default=SIZE,
-                        help='Size of each tile, generally a square number. '
-                        'This corresponds to the size index hash table of the '
-                        'tiling algorithm. Default: ' + str(SIZE))
+    parser.add_argument('-s', '--hidden_size', type=int, default=HIDDEN_SIZE,
+                        help='Size of each of the hidden layeres. '
+                        'Default: ' + str(HIDDEN_SIZE))
     parser.add_argument('-n', '--runs', type=int, default=RUNS,
                         help='Number of runs to be executed. Default: '
                         + str(RUNS))
@@ -78,6 +62,9 @@ def get_arguments():
     parser.add_argument('--max_steps', type=int, default=MAX_STEPS,
                         help='Number of maximum steps allowed in a single '
                         'episode. Default: ' + str(MAX_STEPS))
+    parser.add_argument('-u', '--update_every', type=int, default=UPDATE_EVERY,
+                        help='Number of episodes to run before every weight '
+                        'update. Default: ' + str(UPDATE_EVERY))
     parser.add_argument('-v', '--verbose', action="store_true",
                         help='If this flag is set, the algorithm will '
                         'generate more output, useful for debugging.')
@@ -91,293 +78,106 @@ def get_arguments():
 
     return parser.parse_args()
 
-
 # #############################################################################
 #
-# Plotting
-#
-# #############################################################################
-
-
-def plot3(title, steps, alphas, lambdas):
-    '''Creates the plots: average steps per lambda, per alpha, per episodes'''
-
-    fig, axs = plt.subplots(nrows=1, ncols=3,
-                            constrained_layout=True,
-                            sharey=True,
-                            figsize=(10, 3))
-
-    fig.suptitle(title, fontsize=12)
-
-    plot_lambdas(axs[0], steps, x_values=alphas, series=lambdas)
-    axs[0].set_xlabel('alpha (log scale)')
-    axs[0].set_ylabel('Average steps')
-    axs[0].set_title('Sarsa($\\lambda$)')
-    axs[0].set_xscale('log', basex=2)
-    axs[0].legend()
-
-    plot_alphas(axs[1], steps, x_values=lambdas, series=alphas)
-    axs[1].set_xlabel('lambda')
-    axs[1].set_ylabel('Average steps')
-    axs[1].set_title('Learning rate')
-    axs[1].legend()
-
-    plot_alphas2(axs[2], steps, alphas, lambdas)
-    axs[2].set_xlabel('episode')
-    axs[2].set_ylabel('Average steps')
-    axs[2].set_xlim(None, 200)
-    axs[2].legend()
-
-    fig, axs_zoom = plt.subplots(nrows=1, ncols=3,
-                            constrained_layout=True,
-                            sharey=True,
-                            figsize=(10, 3))
-
-    plot_lambdas(axs_zoom[0], steps, x_values=alphas, series=lambdas)
-    axs_zoom[0].set_xlabel('alpha (log scale)')
-    axs_zoom[0].set_ylabel('Average steps')
-    axs_zoom[0].set_title('Sarsa($\\lambda$)')
-    axs_zoom[0].set_xscale('log', basex=2)
-    axs_zoom[0].legend()
-
-    plot_alphas(axs_zoom[1], steps, x_values=lambdas, series=alphas)
-    axs_zoom[1].set_xlabel('lambda')
-    axs_zoom[1].set_ylabel('Average steps')
-    axs_zoom[1].set_title('Learning rate')
-    axs_zoom[1].legend()
-
-    plot_alphas2(axs_zoom[2], steps, alphas, lambdas)
-    axs_zoom[2].set_xlabel('episode')
-    axs_zoom[2].set_ylabel('Average steps')
-    axs_zoom[2].set_xlim(None, 200)
-    axs_zoom[2].legend()
-
-    axs_zoom[2].set_ylim(None, 500)
-    fig.suptitle(title + ' (zoomed)', fontsize=12)
-
-    plt.show()
-
-
-def plot_lambdas(ax, steps, x_values, series):
-    '''Plots the average number of steps per alpha for each lambda.
-
-    Input:
-    ax      : the target axis object
-    steps   : array of shape
-              (len(lambdas), len(alphas), args.runs, args.episodes)
-              containing the number of steps for each lambda, alpha, run,
-              episode
-    x_values: array of shape len(aplhas) with labels for the x axis
-    series  : array of shape len(lambdas) with the series names for the
-              legend'''
-
-    for lmbda in range(steps.shape[0]):
-        # get number of steps from last episode
-        data = steps[lmbda, :, :, args.episodes - 1]
-        plot_line_variance(ax,
-                           x_values,
-                           data,
-                           label='$\\lambda=$' + str(series[lmbda]),
-                           color='C' + str(lmbda),
-                           axis=1)
-
-
-def plot_alphas(ax, steps, x_values, series):
-    '''Plots the average number of steps per lambda for each alpha.
-
-    Input:
-    ax      : the target axis object
-    steps   : array of shape
-              (len(lambdas), len(alphas), args.runs, args.episodes)
-              containing the number of steps for each lambda, alpha, run,
-              episode
-    x_values: array of shape len(lambdas) with labels for the x axis
-    series  : array of shape len(alphas) with the series names for the
-              legend'''
-
-    for alpha in range(steps.shape[1]):
-        # get number of steps from last episode
-        data = steps[:, alpha, :, args.episodes - 1]
-        plot_line_variance(ax,
-                           x_values,
-                           data,
-                           label='$\\alpha=$' + str(series[alpha]),
-                           color='C' + str(alpha),
-                           axis=1)
-
-
-def plot_alphas2(ax, steps, series, lambdas):
-    '''Plots the learning curves (the average number of steps per
-    episode) for each alpha.
-
-    Input:
-    ax      : the target axis object
-    steps   : array of shape
-              (len(lambdas), len(alphas), args.runs, args.episodes)
-              containing the number of steps for each lambda, alpha, run,
-              episode
-    series  : array of shape len(alphas) with the series names for the
-              legend
-    lambdas : arrays of lambdas
-    '''
-
-    # use the middle element of the lambdas vector
-    idx = np.int(len(lambdas) / 2)
-
-    x_values = np.arange(args.episodes)
-
-    for alpha in range(steps.shape[1]):
-        data = steps[idx, alpha, :, :]
-        plot_line_variance(ax,
-                        x_values,
-                        data,
-                        label='$\\alpha=$' + str(series[alpha]),
-                        color='C' + str(alpha),
-                        axis=0)
-
-    ax.set_title('Sarsa({})'.format(lambdas[idx]))
-
-
-def plot_line_variance(ax, x_values, data, label, color, axis=0, delta=1):
-    '''Plots the average data for each time step and draws a cloud
-    of the standard deviation around the average.
-
-    Input:
-    ax      : axis object where the plot will be drawn
-    data    : data of shape (num_trials, timesteps)
-    color   : the color to be used
-    delta   : (optional) scaling of the standard deviation around the average
-              if ommitted, delta = 1.'''
-
-    avg = np.average(data, axis)
-    std = np.std(data, axis)
-
-    # ax.plot(avg + delta * std, color + '--', linewidth=0.5)
-    # ax.plot(avg - delta * std, color + '--', linewidth=0.5)
-    ax.fill_between(x_values,
-                    avg + delta * std,
-                    avg - delta * std,
-                    facecolor=color,
-                    alpha=0.2)
-    ax.plot(x_values, avg, label=label, color=color, marker='.')
-
-# #############################################################################
-#
-# Policy
+# Reinforce
 #
 # #############################################################################
 
 
-class policy():
+def discount_rewards(r, gamma = 0.9):
+    discounted_r = np.zeros_like(r)
+    running_add = 0
+    for t in reversed(range(0, r.size)):
+        running_add = running_add * gamma + r[t]
+        discounted_r[t] = running_add
+    return discounted_r
+
+
+class policy(tf.keras.Model):
     def __init__(self, env, seed=None):
-        self.env = env
-        self.hidden_size = args.hidden_size
+        super(policy, self).__init__()
+        # build 2-layer MLP model
+        self.model = tf.keras.Sequential()
+        self.model.add(tf.keras.layers.Dense(32, input_dim=4, activation='relu'))
+        self.model.add(tf.keras.layers.Dense(2, activation='softmax'))
+        self.model.build()
 
-        # initialize environement and weights
+        # sets the environment
+        self.env = env.unwrapped
         self.env.seed(seed)
 
-        # initialize network
-        self.n_inputs = self.env.observation_space.shape[0]
-        self.n_outputs = self.env.action_space.n
+        # initialize model parameters
+        self.theta = self.model.trainable_variables
+        for ix, grad in enumerate(self.theta):
+            self.theta[ix] = grad * 0
 
-        self.model = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(self.hidden_size, activation='relu')
-            # tf.keras.layers.Dropout(0.2)
-            tf.keras.layers.Dense(self.hidden_size, activation='relu')
-            # tf.keras.layers.Dropout(0.2)
-            tf.keras.layers.Dense(self.n_outputs)
-        ])
+    def call(self, state):
+        return self.model(state)
 
     def choose_action(self, state):
-        predictions = self.model(state).numpy()
-        action_probs = tf.nn.softmax(predictions).numpy()
-        action = np.random.choice(self.env.action_space, p=action_probs)
-        return action
+        'Returns action and gradients.'
 
-    def get_episode(self):
-        states = []
-        actions = []
-        rewards = []
+        compute_loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
 
-        state = self.env.reset()
+        # state = state.reshape([1, self.env.observation_space.shape[0]])
+        state = state[None]
+        with tf.GradientTape() as tape:
+            # forward pass
+            logits = self(state)
+            action_probs = logits.numpy()
+            # Choose random action with p = action dist
+            action = np.random.choice(action_probs[0], p=action_probs[0])
+            action = np.argmax(action_probs == action)
+            loss = compute_loss([action], logits)
+        grads = tape.gradient(loss, self.model.trainable_variables)
 
-        done = False
-        while not done:
-            states.append(state)
-            action = self.choose_action(state)
-            actions.append(action)
-
-            state, reward, done, _ = self.env.step(action)
-            rewards.append(reward)
-
-        episode = {
-            'states': states,
-            'actions': actions,
-            'rewards': rewards
-        }
-
-        return episode
-
-# #############################################################################
-#
-# Algorithms
-#
-# #############################################################################
+        return action, grads
 
 
-def reinforce(env, alpha, seed=None):
+def reinforce(alpha):
+
+    n_episodes = args.episodes
+    update_every = args.update_every
+    seed = args.seed
     gamma = args.gamma
 
-    assert 0 <= gamma <= 1
-    assert alpha > 0
+    env = gym.make(args.env)
 
-    delta = np.Infinity
+    # sets optimizer and learning rate
+    optimizer = tf.keras.optimizers.Adam(learning_rate=alpha)
     pi = policy(env, seed)
 
-    while delta > tol:
-        episode = pi.get_episode()
-        T = len(episode['states'])
-        for t in range(T):
-            G = sum
-            delta = G - v_hat(state, w)
-            w += alpha_w * delta * grad_v(state, w)
-            theta += alpha_t * gamma ** t * delta * grad_pol(state, action, theta)
-
-
-def actor_critic(env, alpha_t, alpha_w, lambda_t, lambda_w, seed=None):
-    gamma = args.gamma
-
-    assert 0 <= gamma <= 1    
-    assert alpha_t > 0
-    assert alpha_w > 0
-    assert 0 <= lambda_t <= 1
-    assert 0 <= lambda_w <= 1
-
-    theta_size = 10
-    w_size = 10
-
-    theta = np.zeros(theta_size)
-    w = np.zeros(w_size)
-
-    delta = np.Infinity
-
-    while delta > tol:
-        state0
-        z_t = np.zeros(theta_size)
-        z_w = np.zeros(w_size)
-        I = 1
+    for e in range(n_episodes):
+        state = env.reset()
+        episode = []
+        steps = 0
         done = False
-
         while not done:
-            action0 = pol_state(state0, theta)
-            state1, R, done, info = env.step(action0)
-            delta = R + gamma * v_hat(state1, w) - v_hat(state0, w)
-            z_w = gamma * lambda_w * z_w + grad_v(state0, w)
-            z_t = gamma * lambda_t * z_t + I * grad_pol(state0, action0, theta)
-            w += alpha_w * delta * z_w
-            theta += alpha_t * delta * z_t
-            I *= gamma
-            state0 = state1
+            action, grads = pi.choose_action(state)
+            state, r, done, _ = env.step(action)
+            steps += 1
+            if done: r -= 10    # makes training faster
+            episode.append([grads, r])
+
+        scores.append(steps)
+
+        # Discound rewards
+        episode = np.array(episode)
+        episode[:, 1] = discount_rewards(episode[:, 1], gamma)
+
+        for grads, r in episode:
+            for idx, grad in enumerate(grads):
+                pi.theta[idx] += grad * r
+
+        if e % update_every == 0:
+            optimizer.apply_gradients(zip(pi.theta, pi.model.trainable_variables))
+            for idx, grad in enumerate(pi.theta):
+                pi.theta[idx] = grad * 0
+
+        if e % 100 == 0:
+            print("Episode  {}  Score  {}".format(e, np.mean(scores[-100:])))
+
 
 # #############################################################################
 #
@@ -388,7 +188,6 @@ def actor_critic(env, alpha_t, alpha_w, lambda_t, lambda_w, seed=None):
 
 # global variables
 args = get_arguments()
-iht = IHT(args.size)
 
 
 def save(objects, filename):
@@ -445,11 +244,9 @@ def main():
     # sets the seed for random experiments
     np.random.seed(args.seed)
 
-    env = gym.make(args.env)
-    env._max_episode_steps = args.max_steps
+    # env._max_episode_steps = args.max_steps
 
     alphas = args.alphas
-    lambdas = args.lambdas
 
     if args.load is not None:
         # load pre-saved data
@@ -457,10 +254,11 @@ def main():
         steps, args = load(filename)
         print('Using saved data from: {}'.format(filename))
     else:
-        steps = runs(env, alphas, lambdas)
-        save([steps, args], 'steps')
+        # steps = runs(env, alphas, lambdas)
+        reinforce(alpha=0.01)
+        # save([steps, args], 'steps')
 
-    plot3('Average steps', steps, alphas, lambdas)
+    # plot3('Average steps', steps, alphas, lambdas)
 
 
 if __name__ == '__main__':
