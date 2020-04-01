@@ -10,7 +10,8 @@ from datetime import datetime
 SEED = None
 GAMMA = 0.9
 ALPHAS = 2.0**np.array([-6, -4, -2, 0])
-HIDDEN_SIZE = 32
+THETA_SIZE = 32
+W_SIZE = 32
 RUNS = 5
 EPISODES = 2000
 MAX_STEPS = 200
@@ -49,9 +50,12 @@ def get_arguments():
                         help='The learning rates to be '
                         'used. More than one value can be specified if '
                         'separated by spaces. Default: ' + str(ALPHAS))
-    parser.add_argument('-s', '--hidden_size', type=int, default=HIDDEN_SIZE,
-                        help='Size of each of the hidden layeres. '
-                        'Default: ' + str(HIDDEN_SIZE))
+    parser.add_argument('--theta_size', type=int, default=THETA_SIZE,
+                        help='Size of the hidden layer. '
+                        'Default: ' + str(THETA_SIZE))
+    parser.add_argument('--w_size', type=int, default=W_SIZE,
+                        help='Size of weight vector. '
+                        'Default: ' + str(W_SIZE))
     parser.add_argument('-n', '--runs', type=int, default=RUNS,
                         help='Number of runs to be executed. Default: '
                         + str(RUNS))
@@ -78,12 +82,12 @@ def get_arguments():
 
     return parser.parse_args()
 
-# #############################################################################
-#
-# Reinforce
-#
-# #############################################################################
 
+# #############################################################################
+#
+# Rewards
+#
+# #############################################################################
 
 def discount_rewards(r, gamma = 0.9):
     discounted_r = np.zeros_like(r)
@@ -94,18 +98,30 @@ def discount_rewards(r, gamma = 0.9):
     return discounted_r
 
 
+# #############################################################################
+#
+# Classes
+#
+# #############################################################################
+
 class policy(tf.keras.Model):
     def __init__(self, env, seed=None):
         super(policy, self).__init__()
-        # build 2-layer MLP model
-        self.model = tf.keras.Sequential()
-        self.model.add(tf.keras.layers.Dense(32, input_dim=4, activation='relu'))
-        self.model.add(tf.keras.layers.Dense(2, activation='softmax'))
-        self.model.build()
 
         # sets the environment
         self.env = env.unwrapped
         self.env.seed(seed)
+
+        # build 2-layer MLP model
+        self.model = tf.keras.Sequential()
+        self.model.add(
+            tf.keras.layers.Dense(args.theta_size,
+                                  input_dim=env.observation_space.shape[0],
+                                  activation='relu'))
+        self.model.add(
+            tf.keras.layers.Dense(env.action_space.n,
+                                  activation='softmax'))
+        self.model.build()
 
         # initialize model parameters
         self.theta = self.model.trainable_variables
@@ -120,7 +136,6 @@ class policy(tf.keras.Model):
 
         compute_loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
 
-        # state = state.reshape([1, self.env.observation_space.shape[0]])
         state = state[None]
         with tf.GradientTape() as tape:
             # forward pass
@@ -135,12 +150,66 @@ class policy(tf.keras.Model):
         return action, grads
 
 
-def reinforce(alpha):
+class v_hat(tf.keras.Model):
+    def __init__(self, alpha_w):
+        super(policy, self).__init__()
+
+        # build 2-layer MLP model
+        self.model = tf.keras.Sequential()
+        self.model.add(
+            tf.keras.layers.Dense(
+                args.w_size,
+                input_dim=env.observation_space.shape[0],
+                activation='relu'
+                )
+            )
+        self.model.build()
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=alpha_w)
+
+
+        # initialize model parameters
+        self.w = self.model.trainable_variables
+        for ix, grad in enumerate(self.w):
+            self.w[ix] = grad * 0
+
+    def call(self, state):
+        state = state[None]
+        return self.model(state)
+
+    def update(self, state, reward):
+        compute_loss = tf.keras.losses.MeanSquaredError()
+
+        state = state[None]
+        with tf.GradientTape() as tape:
+            # forward pass
+            value = self(state)
+            loss = compute_loss(reward, value)
+        grads = tape.gradient(loss, self.model.trainable_variables)
+
+        return grads
+
+    def apply_gradients(w):
+        self.optimizer.apply_gradients(zip(w, self.model.trainable_variables))
+        for idx, grad in enumerate(w):
+            w[idx] = grad * 0
+
+
+
+# #############################################################################
+#
+# Methods
+#
+# #############################################################################
+
+
+def reinforce(alpha, seed=None):
 
     n_episodes = args.episodes
     update_every = args.update_every
-    seed = args.seed
     gamma = args.gamma
+
+    assert alpha > 0
+    assert 0 <= gamma <= 1
 
     env = gym.make(args.env)
 
@@ -177,6 +246,42 @@ def reinforce(alpha):
 
         if e % 100 == 0:
             print("Episode  {}  Score  {}".format(e, np.mean(scores[-100:])))
+
+
+def actor_critic(alpha_t, alpha_w, seed=None):
+
+    n_episodes = args.episodes
+    update_every = args.update_every
+    gamma = args.gamma
+
+    assert 0 <= gamma <= 1
+    assert alpha_t > 0
+    assert alpha_w > 0
+
+    env = gym.make(args.env)
+
+    # sets optimizer and learning rate
+    actor_opt = tf.keras.optimizers.Adam(learning_rate=alpha_t)
+    actor = policy(env, seed)
+
+    critic = v_hat(alpha_w)
+
+    for e in range(n_episodes):
+        state0 = env.reset()
+        episode = []
+        steps = 0
+        done = False
+        I = 1
+
+        while not done:
+            action, grads = actor.choose_action(state0)
+            state1, R, done, _ = env.step(action)
+            steps += 1
+            delta = R + gamma * critic(state1, w) - critic(state0, w)
+            w += alpha_w * delta * z_w
+            theta += alpha_t * delta * z_t
+            I *= gamma
+            state0 = state1
 
 
 # #############################################################################

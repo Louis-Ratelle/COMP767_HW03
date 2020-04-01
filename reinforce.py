@@ -47,7 +47,7 @@ for e in range(n_episodes):
         grads = tape.gradient(loss, model.trainable_variables)
         # make the choosen action
         state, r, done, _ = env.step(action)
-        score += r
+        score += 1
         if done: r -= 10 # small trick to make training faster
 
         episode.append([grads, r])
