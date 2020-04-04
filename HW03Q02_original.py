@@ -5,7 +5,6 @@ import argparse
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pickle
-# import a2c.py
 from datetime import datetime
 
 SEED = None
@@ -21,6 +20,10 @@ ENV = 'CartPole-v1'
 SAVED_MODELS_FOLDER = './data/'
 NOW = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
 
+n_episodes = 2000
+env = gym.make('CartPole-v1').unwrapped
+scores = []
+update_every = 10
 
 # #############################################################################
 #
@@ -102,7 +105,7 @@ def discount_rewards(r, gamma = 0.9):
 # #############################################################################
 
 class policy(tf.keras.Model):
-    def __init__(self, env, alpha, seed=None):
+    def __init__(self, env, seed=None):
         super(policy, self).__init__()
 
         # sets the environment
@@ -120,15 +123,12 @@ class policy(tf.keras.Model):
                                   activation='softmax'))
         self.model.build()
 
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=alpha)
-
         # initialize model parameters
-        self.gradients = self.model.trainable_variables
-        for ix, grad in enumerate(self.gradients):
-            self.gradients[ix] = grad * 0
+        self.theta = self.model.trainable_variables
+        for ix, grad in enumerate(self.theta):
+            self.theta[ix] = grad * 0
 
     def call(self, state):
-        state = state[None]
         return self.model(state)
 
     def choose_action(self, state):
@@ -136,6 +136,7 @@ class policy(tf.keras.Model):
 
         compute_loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
 
+        state = state[None]
         with tf.GradientTape() as tape:
             # forward pass
             logits = self(state)
@@ -148,82 +149,52 @@ class policy(tf.keras.Model):
 
         return action, grads
 
-    def update(self, episode):
-        for grads, r in episode:
-            for idx, grad in enumerate(grads):
-                self.gradients[idx] += grad * r
-
-    def update_actor(self, grads, I, delta):
-        for idx, grad in enumerate(grads):
-            self.gradients[idx] += I * delta * grad
-
-    def apply_gradients(self):
-        self.optimizer.apply_gradients(zip(self.gradients, self.model.trainable_variables))
-        # for idx, grad in enumerate(self.model.trainable_variables):
-        #     print('Sum theta_{}: {}'.format(idx, np.sum(np.abs(grad))))
-        for idx, grad in enumerate(self.gradients):
-            self.gradients[idx] = grad * 0
-
-
 
 class v_hat(tf.keras.Model):
-    def __init__(self, alpha_w, input_dim):
-        super(v_hat, self).__init__()
+    def __init__(self, alpha_w):
+        super(policy, self).__init__()
 
         # build 2-layer MLP model
         self.model = tf.keras.Sequential()
         self.model.add(
             tf.keras.layers.Dense(
                 args.w_size,
-                input_dim=input_dim,
+                input_dim=env.observation_space.shape[0],
                 activation='relu'
                 )
             )
-        self.model.add(
-            tf.keras.layers.Dense(1))
-
         self.model.build()
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=alpha_w)
 
+
         # initialize model parameters
-        self.gradients = self.model.trainable_variables
-        for ix, grad in enumerate(self.gradients):
-            self.gradients[ix] = grad * 0
+        self.w = self.model.trainable_variables
+        for ix, grad in enumerate(self.w):
+            self.w[ix] = grad * 0
 
     def call(self, state):
         state = state[None]
-        return tf.reshape(self.model(state), [])
+        return self.model(state)
 
-    def update(self, state0, state1, r, done):
-        gamma = args.gamma
+    def update(self, state, reward):
         compute_loss = tf.keras.losses.MeanSquaredError()
 
+        state = state[None]
         with tf.GradientTape() as tape:
-            tape.watch(self.model.trainable_variables)
-            if done:
-                v1 = 0      # terminal state
-            else:
-                v1 = self(state1)
-            v0 = self(state0)
-            target = r + gamma * v1
-            delta = target - v0
-
-            loss = compute_loss([target], [v0])
-            # loss = delta ** 2
+            # forward pass
+            value = self(state)
+            loss = compute_loss(reward, value)
         grads = tape.gradient(loss, self.model.trainable_variables)
 
-        for idx, grad in enumerate(grads):
-            self.gradients[idx] += grad * delta
+        return grads
 
-        return delta
+    def apply_gradients(w):
+        self.optimizer.apply_gradients(zip(w, self.model.trainable_variables))
+        for idx, grad in enumerate(w):
+            w[idx] = grad * 0
 
-    def apply_gradients(self):
-        self.optimizer.apply_gradients(zip(self.gradients, self.model.trainable_variables))
-        # for idx, grad in enumerate(self.model.trainable_variables):
-        #     print('Sum w{}: {}'.format(idx, np.sum(np.abs(grad))))
-        for idx, grad in enumerate(self.gradients):
-            self.gradients[idx] = grad * 0
-        
+
+
 # #############################################################################
 #
 # Methods
@@ -236,15 +207,15 @@ def reinforce(alpha, seed=None):
     n_episodes = args.episodes
     update_every = args.update_every
     gamma = args.gamma
-    scores = []
 
     assert alpha > 0
     assert 0 <= gamma <= 1
 
-    env = gym.make(args.env).unwrapped
-    env.spec.max_episode_steps = args.max_steps
+    env = gym.make(args.env)
 
-    pi = policy(env, alpha, seed)
+    # sets optimizer and learning rate
+    optimizer = tf.keras.optimizers.Adam(learning_rate=alpha)
+    pi = policy(env, seed)
 
     for e in range(n_episodes):
         state = env.reset()
@@ -254,9 +225,9 @@ def reinforce(alpha, seed=None):
         while not done:
             action, grads = pi.choose_action(state)
             state, r, done, _ = env.step(action)
+            steps += 1
             if done: r -= 10    # makes training faster
             episode.append([grads, r])
-            steps += 1
 
         scores.append(steps)
 
@@ -264,11 +235,14 @@ def reinforce(alpha, seed=None):
         episode = np.array(episode)
         episode[:, 1] = discount_rewards(episode[:, 1], gamma)
 
-        # update weights
-        pi.update(episode)
+        for grads, r in episode:
+            for idx, grad in enumerate(grads):
+                pi.theta[idx] += grad * r
 
         if e % update_every == 0:
-            pi.apply_gradients()
+            optimizer.apply_gradients(zip(pi.theta, pi.model.trainable_variables))
+            for idx, grad in enumerate(pi.theta):
+                pi.theta[idx] = grad * 0
 
         if e % 100 == 0:
             print("Episode  {}  Score  {}".format(e, np.mean(scores[-100:])))
@@ -279,48 +253,35 @@ def actor_critic(alpha_t, alpha_w, seed=None):
     n_episodes = args.episodes
     update_every = args.update_every
     gamma = args.gamma
-    scores = []
 
     assert 0 <= gamma <= 1
     assert alpha_t > 0
     assert alpha_w > 0
 
-    env = gym.make(args.env).unwrapped
-    env.spec.max_episode_steps = args.max_steps
+    env = gym.make(args.env)
 
-    actor = policy(env, alpha_t, seed)
-    critic = v_hat(
-        alpha_w,
-        input_dim=actor.env.observation_space.shape[0]
-        )
+    # sets optimizer and learning rate
+    actor_opt = tf.keras.optimizers.Adam(learning_rate=alpha_t)
+    actor = policy(env, seed)
+
+    critic = v_hat(alpha_w)
 
     for e in range(n_episodes):
         state0 = env.reset()
         episode = []
         steps = 0
         done = False
-        i = 1
+        I = 1
 
         while not done:
             action, grads = actor.choose_action(state0)
-            state1, r, done, _ = env.step(action)
+            state1, R, done, _ = env.step(action)
             steps += 1
-            # if done: r -= 10    # makes training faster
-
-            delta = critic.update(state0, state1, r, done)
-            actor.update([[grads, i * delta]])
-
-            i *= gamma
+            delta = R + gamma * critic(state1, w) - critic(state0, w)
+            w += alpha_w * delta * z_w
+            theta += alpha_t * delta * z_t
+            I *= gamma
             state0 = state1
-
-        scores.append(steps)
-
-        if e % update_every == 0:
-            actor.apply_gradients()
-            critic.apply_gradients()
-
-        if e % 100 == 0:
-            print("Episode  {}  Score  {}".format(e, np.mean(scores[-100:])))
 
 
 # #############################################################################
@@ -399,8 +360,7 @@ def main():
         print('Using saved data from: {}'.format(filename))
     else:
         # steps = runs(env, alphas, lambdas)
-        reinforce(alpha=0.01)
-        # actor_critic(alpha_t=0.01, alpha_w=0.01)
+        reinforce(alpha=0.01, seed=197710)
         # save([steps, args], 'steps')
 
     # plot3('Average steps', steps, alphas, lambdas)
