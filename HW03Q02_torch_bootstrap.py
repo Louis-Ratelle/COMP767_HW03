@@ -1,6 +1,7 @@
 import os
 import sys
 import gym
+import copy
 import pickle
 import argparse
 import numpy as np
@@ -18,9 +19,9 @@ from tqdm import tqdm
 from datetime import datetime
 
 SEED = None
-GAMMA = 0.9
-ALPHAS = [0.01, 0.001, 0.0001]
-HIDDEN_SIZE = [32, 64, 128]
+GAMMA = 0.99
+ALPHAS = [0.01]
+HIDDEN_SIZE = 8
 RUNS = 5
 EPISODES = 2000
 MAX_STEPS = 200
@@ -55,7 +56,6 @@ def get_arguments():
                         'policy. More than one value can be specified if '
                         'separated by spaces. Default: ' + str(ALPHAS))
     parser.add_argument('-s', '--hidden_size', type=int, default=HIDDEN_SIZE,
-                        nargs='*',
                         help='Size of the hidden layer. '
                         'Default: ' + str(HIDDEN_SIZE))
     parser.add_argument('-n', '--runs', type=int, default=RUNS,
@@ -92,67 +92,65 @@ def get_arguments():
 # #############################################################################
 
 
-def plot9(title, steps_rf, steps_ac):
-    '''Creates 9 plots for different combinations of the
-    hyperparameters.'''
+def plot3(title, steps_rf, steps_ac):
+    '''Creates the plots: average steps per lambda, per alpha, per episodes'''
 
-    fig, axs = plt.subplots(nrows=3, ncols=3,
+    fig, axs = plt.subplots(nrows=1, ncols=1,
                             constrained_layout=True,
                             sharey=True,
                             figsize=(10, 10))
 
     fig.suptitle(title, fontsize=12)
-    i = 0
-    for hs_idx, hs in enumerate(args.hidden_size):
-        for alpha_idx, alpha in enumerate(args.alphas):
-            plot_learning_curves(axs[hs_idx, alpha_idx], steps_rf, steps_ac, hs_idx, alpha_idx)
-            axs[hs_idx, alpha_idx].set_xlabel('Episodes')
-            axs[hs_idx, alpha_idx].set_ylabel('Number of steps')
-            axs[hs_idx, alpha_idx].set_title('Hidden layer size: {}\nLearning rate: {}'.format(hs, alpha))
-            axs[hs_idx, alpha_idx].legend()
-            i += 1
-            if i == 9: break
+
+    plot_learning_curves(axs, steps_rf, steps_ac)
+    axs.set_xlabel('Episodes')
+    axs.set_ylabel('Number of steps')
+    axs.set_title('Learning curves')
+    axs.legend()
+
     plt.show()
 
 
-def plot_learning_curves(ax, steps_rf, steps_ac, hidden_idx, alpha_idx):
-    '''Plots the number of steps per episode.
+def plot_learning_curves(ax, steps_rf, steps_ac):
+    '''Plots the average number of steps per lambda for each alpha.
 
     Input:
-    ax          : the target axis object
-    steps_rf    : array of shape
-                  (len(sizes), len(alphas), args.runs, args.episodes)
-                  containing the number of steps for each hidden_size, alpha, run,
-                  episode for reinforce method
-    steps_ac    : array of shape
-                  (len(sizes), len(alphas), args.runs, args.episodes)
-                  containing the number of steps for each hidden_size, alpha, run,
-                  episode for actor-critic method
-    hidden_idx  : index of the hidden_size
-    alpha_idx   : index of the learning rate alpha'''
+    ax      : the target axis object
+    steps   : array of shape
+              (len(alphas), args.runs, args.episodes)
+              containing the number of steps for each alpha_w, alpha_t, run,
+              episode'''
 
     x_values = np.arange(1, args.episodes + 1)
+    color_idx = 0
 
-    data = steps_rf[hidden_idx, alpha_idx, :, :]
-    plot_line_variance(
-        ax,
-        x_values,
-        data,
-        label='Reinforce',
-        color='C0',
-        axis=0
-    )
+    for alpha in range(steps_rf.shape[0]):
+        # get number of steps from last episode
+        data = steps_rf[alpha, :, :]
+        plot_line_variance(
+            ax,
+            x_values,
+            data,
+            label='Reinforce',
+            color='C' + str(color_idx),
+            axis=0
+        )
+        color_idx += 1
 
-    data = steps_ac[hidden_idx, alpha_idx, :, :]
-    plot_line_variance(
-        ax,
-        x_values,
-        data,
-        label='Actor-Critic',
-        color='C1',
-        axis=0
-    )
+    for alpha in range(steps_ac.shape[0]):
+        # get number of steps from last episode
+        data = steps_ac[alpha, :, :]
+        plot_line_variance(
+            ax,
+            x_values,
+            data,
+            label='Actor-Critic',
+            color='C' + str(color_idx),
+            axis=0
+        )
+        color_idx += 1
 
+    ax.set_title('Reinforce and Actor-Critic')
 
 
 def plot_line_variance(ax, x_values, data, label, color, axis=0, delta=1):
@@ -161,7 +159,6 @@ def plot_line_variance(ax, x_values, data, label, color, axis=0, delta=1):
 
     Input:
     ax      : axis object where the plot will be drawn
-    x_values: x-axis labels
     data    : data of shape (num_trials, timesteps)
     color   : the color to be used
     delta   : (optional) scaling of the standard deviation around the average
@@ -207,76 +204,127 @@ def discount_rewards(rewards):
 
 # #############################################################################
 #
-# Model
+# Classes
 #
 # #############################################################################
 
 
-class Policy(nn.Module):
-    def __init__(self, agent, input_dim, output_dim, hidden_size, alpha):
-        super(Policy, self).__init__()
+class Critic(nn.Module):
+    def __init__(self, input_dim, output_dim, alpha):
+        super(Critic, self).__init__()
+        hidden_size = args.hidden_size
 
-        self.hidden = nn.Linear(input_dim, hidden_size)
+        self.hidden1 = nn.Linear(input_dim, 400)
+        self.hidden2 = nn.Linear(400, 400)
 
-        # actor
-        self.action_head = nn.Linear(hidden_size, output_dim)
-
-        # critic
-        self.value_head = nn.Linear(hidden_size, 1)
+        self.value_head = nn.Linear(400, 1)
 
         self.actions = []
         self.rewards = []
 
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=alpha)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
 
-        if agent == 'ac':
-            self.backprop = self.backprop_ac
-        else:
-            self.backprop = self.backprop_rf
+    def forward(self, x):
+        # critic: evaluates being in the state s_t
+        x = F.relu(self.hidden1(x))
+        x = F.relu(self.hidden2(x))
+
+        value = self.value_head(x)
+
+        return value.item()
+
+    def backprop(self, log_prob, target, v0, i):
+
+        gamma = args.gamma
+
+        value_losses = []
+
+        advantage = target - v0
+
+
+        # convert to tensor
+        advantage = torch.tensor(advantage)
+        log_prob = torch.tensor(log_prob)
+        v0 = torch.tensor([v0])
+        target = torch.tensor([target])
+
+        target.requires_grad = True
+        v0.requires_grad = True
+        advantage.requires_grad = True
+
+        # critic loss using L1 smooth loss
+        # value_losses.append(F.smooth_l1_loss(v0, target))
+        value_losses.append(-v0)
+
+        # sum up all the values of policy_losses and value_losses
+        loss = torch.stack(value_losses).sum()
+
+        # backprop
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        # reset buffers
+        del self.rewards[:]
+        del self.actions[:]
+
+
+class Actor(nn.Module):
+    def __init__(self, input_dim, output_dim, alpha):
+        super(Actor, self).__init__()
+        hidden_size = args.hidden_size
+
+        self.hidden1 = nn.Linear(input_dim, 40)
+        self.hidden2 = nn.Linear(40, 40)
+
+        self.action_head = nn.Linear(40, output_dim)
+
+        self.actions = []
+        self.rewards = []
+
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.00002)
 
     def forward(self, x):
 
-        x = F.relu(self.hidden(x))
+        x = F.relu(self.hidden1(x))
+        x = F.relu(self.hidden2(x))
 
+        # actor: choses action to take from state s_t 
+        # by returning probability of each action
         action_prob = F.softmax(self.action_head(x), dim=-1)
-        value = self.value_head(x)
 
-        return action_prob, value
+        return action_prob
 
     def choose_action(self, state):
-        state = torch.from_numpy(state).float()
-        probs, value = self(state)
+        # state = torch.from_numpy(state).float()
+        probs= self(state)
 
         # get categorical distribution from probabilities
         # and sample an action
         distr = Categorical(probs)
         action = distr.sample()
 
-        # save to action buffer
-        self.actions.append([distr.log_prob(action), value])
+        return action.item(), distr.log_prob(action)
 
-        return action.item()
+    def backprop(self, log_prob, target, v0, i):
 
-    def backprop_rf(self):
-        '''Calculate losses and do gradient backpropagation.
-        This code for the reinforce method complety ignores the
-        value branch of the network, and back propagates over
-        the policy.'''
+        gamma = args.gamma
 
         policy_losses = []
+        value_losses = []
 
-        # discount rewards and normalise returns
-        returns = discount_rewards(self.rewards)
-        returns = torch.tensor(returns)
-        returns = (returns - returns.mean()) / (returns.std() + eps)
+        advantage = target - v0
 
-        # calculate losses
-        for (log_prob, value), R in zip(self.actions, returns):
+        # # convert to tensor
+        # advantage = torch.tensor(advantage)
+        # log_prob = torch.tensor(log_prob)
+        # v0 = torch.tensor(v0)
+        # target = torch.tensor(target)
 
-            # actor loss (negative log-likelihood)
-            policy_losses.append(-log_prob * R)
+        # actor loss (negative log-likelihood)
+        policy_losses.append(-log_prob * advantage * i)
 
-        # sum up all the values of policy_losses and value_losses
+        # sum up all the values of policy_losses
         loss = torch.stack(policy_losses).sum()
 
         # backprop
@@ -284,57 +332,21 @@ class Policy(nn.Module):
         loss.backward()
         self.optimizer.step()
 
-        # reset buffers
-        del self.rewards[:]
-        del self.actions[:]
-
-    def backprop_ac(self):
-        '''Calculate losses and do gradient backpropagation
-        for the actor-critic (reinforce with baseline) method.'''
-
-        policy_losses = []
-        value_losses = []
-
-        # discount rewards and normalise returns
-        returns = discount_rewards(self.rewards)
-        returns = torch.tensor(returns)
-        returns = (returns - returns.mean()) / (returns.std() + eps)
-
-        # calculate losses
-        for (log_prob, value), R in zip(self.actions, returns):
-            advantage = R - value.item()
-
-            # actor loss (negative log-likelihood)
-            policy_losses.append(-log_prob * advantage)
-
-            # critic loss using L1 smooth loss
-            value_losses.append(F.smooth_l1_loss(value, torch.tensor([R])))
-
-        # sum up all the values of policy_losses and value_losses
-        loss = torch.stack(policy_losses).sum() + torch.stack(value_losses).sum()
-
-        # backprop
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        # reset buffers
-        del self.rewards[:]
-        del self.actions[:]
 
 # #############################################################################
 #
-# Runs
+# Methods
 #
 # #############################################################################
 
 
-def one_run(agent, hidden_size, alpha, seed=None):
+def actor_critic(alpha, seed=None):
 
     n_episodes = args.episodes
     update_every = args.update_every
     gamma = args.gamma
     scores = []
+    batch_size = 10
 
     assert 0 <= gamma <= 1
     assert alpha > 0
@@ -347,70 +359,51 @@ def one_run(agent, hidden_size, alpha, seed=None):
     input_dim = env.observation_space.shape[0]
     output_dim = env.action_space.n
 
-    model = Policy(agent, input_dim, output_dim, hidden_size, alpha)
+    ac = Actor(input_dim, output_dim, alpha)
+    cr = Critic(input_dim, output_dim, alpha)
 
     for episode in range(args.episodes):
 
         # reset environment and episode reward
-        state = env.reset()
+        state0 = env.reset()
+        state0 = torch.from_numpy(state0).float()
         steps = 0
         done = False
-
+        i = 1
         while not done:
 
             # select action from policy
-            action = model.choose_action(state)
+            action, log_prob = ac.choose_action(state0)
+            v0 = cr(state0)
 
             # take the action
-            state, reward, done, _ = env.step(action)
+            state1, reward, done, _ = env.step(action)
 
             if args.render:
                 env.render()
 
-            model.rewards.append(reward)
+            if done:
+                v1 = torch.tensor([0])
+            else:
+                state1 = torch.from_numpy(state1).float()
+                v1 = cr(state1)
+
+            target = reward + gamma * v1
+
+            # model.rewards.append(reward)
             steps += 1
+            ac.backprop(log_prob, target, v0, i)
+            cr.backprop(log_prob, target, v0, i)
+            i *= gamma
+            state0 = state1
+
 
         scores.append(steps)
-        model.backprop()
 
         # log results
         if episode % args.update_every == 0:
             print('Episode {}\tLast reward: {:.2f}\tAverage reward: {:.2f}'.format(
                   episode, steps, np.mean(scores[-args.update_every:])))
-
-    return scores
-
-
-def runs(agent, sizes, alphas):
-    '''Performs multiple runs (as defined by parameter --runs)
-    for a list of parameters alpha and a list of parameter alphas_w.
-
-    Input:
-    agent     : the agent to be used
-    sizes     : sizes of the hidden layer
-    alphas    : list of alpha_t (learning rates)
-
-    Output:
-    array of shape (len(sizes), len(alphas), args.runs, args.episodes)
-    containing the number of steps for each alpha, run, episode
-    '''
-
-    steps = np.empty((len(sizes), len(alphas), args.runs, args.episodes))
-
-    for size_idx, hidden_size in enumerate(sizes):
-        for alpha_idx, alpha in enumerate(alphas):
-            for run in tqdm(range(args.runs)):
-                # sets a new seed for each run
-                seed = np.random.randint(0, 2**32 - 1)
-                print('Agent: {}\tHidden size: {}\tLearning rate: {}'.format(agent, hidden_size, alpha))
-                steps[size_idx, alpha_idx, run, :] = one_run(
-                    agent,
-                    hidden_size,
-                    alpha,
-                    seed
-                )
-
-    return steps
 
 
 # #############################################################################
@@ -448,6 +441,31 @@ def load(filename):
     return steps_rf, steps_ac, args
 
 
+def runs(agent, alphas):
+    '''Performs multiple runs (as defined by parameter --runs)
+    for a list of parameters alpha and a list of parameter alphas_w.
+
+    Input:
+    agent     : the agent to be used
+    alphas    : list of alpha_t (learning rates)
+
+    Output:
+    array of shape (len(alphas), args.runs, args.episodes)
+    containing the number of steps for each alpha, run, episode
+    '''
+
+    steps = np.zeros((len(alphas), args.runs, args.episodes))
+    for alpha_idx, alpha in enumerate(alphas):
+        for run in tqdm(range(args.runs)):
+            # sets a new seed for each run
+            seed = np.random.randint(0, 2**32 - 1)
+
+            steps[alpha_idx, run, :] = agent(
+                alpha, seed)
+
+    return steps
+
+
 def main():
     global args
 
@@ -466,11 +484,14 @@ def main():
         steps_rf, steps_ac, args = load(filename)
         print('Using saved data from: {}'.format(filename))
     else:
-        steps_rf = runs('rf', args.hidden_size, alphas)
-        steps_ac = runs('ac', args.hidden_size, alphas)
-        save([steps_rf, steps_ac, args], 'steps')
+        # steps_rf = runs(reinforce, alphas_t, [0])
+        # steps_ac = runs(actor_critic, alphas_t, alphas_w)
+        # reinforce(alpha=0.01)
+        actor_critic(0.001)
+        # actor_critic_original(0.01, 0.01)
+        # save([steps_rf, steps_ac, args], 'steps')
 
-    plot9('Learning curves', steps_rf, steps_ac)
+    # plot3('', steps_rf, steps_ac)
 
 
 if __name__ == '__main__':
